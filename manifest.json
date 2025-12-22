@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Hello Friend Reminder",
+  "version": "1.0",
+  "description": "Hiển thị popup 'hello my friend' mỗi 1 phút",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "alarms"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["popup.css"]
+    }
+  ],
+  "action": {
+    "default_title": "Hello Friend Reminder"
+  }
+}
+
