@@ -1,102 +1,204 @@
-
 let popupElement = null;
-let hasShownInitialPopup = false;
+let checkInterval = null;
+
+const API_BASE_URL = 'https://dev-akabis-160903.dev-bsscommerce.com/api';
+const FIXED_USER_ID = '22f42425-602d-4219-867e-8810fdf852ca';
+const CHECK_INTERVAL = 10000;
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log('Content script nhận được message:', request);
   if (request.action === 'showPopup') {
     showPopup();
     sendResponse({ success: true });
   }
-  return true; 
+  return true;
 });
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => {
-      if (!hasShownInitialPopup) {
-        console.log('Hiển thị popup lần đầu khi trang load');
-        showPopup();
-        hasShownInitialPopup = true;
-      }
-    }, 1000); 
-  });
-} else {
+function startChecking() {
+  if (checkInterval) clearInterval(checkInterval);
+  checkInterval = setInterval(() => {
+    if (!popupElement) showPopup();
+  }, CHECK_INTERVAL);
+}
+  
+function init() {
   setTimeout(() => {
-    if (!hasShownInitialPopup) {
-      console.log('Hiển thị popup lần đầu (trang đã load)');
-      showPopup();
-      hasShownInitialPopup = true;
-    }
+    showPopup();
+    startChecking();
   }, 1000);
 }
 
-function showPopup() {
-  console.log('showPopup được gọi');
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+
+function parseQuestionStatement(statement) {
+  try {
+    const trimmed = (statement || '').trim();
+    if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) {
+      return { statement: trimmed || statement || '', options: [] };
+    }
+    const parsed = JSON.parse(trimmed);
+    const data = Array.isArray(parsed) ? parsed[0] : parsed;
+    return {
+      statement: data?.statement || statement || '',
+      options: Array.isArray(data?.options) ? data.options : [],
+    };
+  } catch {
+    return { statement: statement || '', options: [] };
+  }
+}
+
+async function fetchQuestion() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/webhook/question-spr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: FIXED_USER_ID }),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        statusCode: response.status,
+        message: errorText || 'Failed to fetch question',
+        data: null,
+      };
+    }
+    
+    const contentType = response.headers.get('content-type');
+    if (!contentType?.includes('application/json')) {
+      return {
+        statusCode: response.status,
+        message: 'Invalid response format',
+        data: null,
+      };
+    }
+    
+    const data = await response.json();
+    return { statusCode: response.status, ...data };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      message: error.message || 'Failed to fetch question',
+      data: null,
+    };
+  }
+}
+
+function renderQuestion(question) {
+  if (!question) return '<p class="question-text">No question available</p>';
+
+  const parsed = parseQuestionStatement(question.statement);
+  const questionType = question.type;
+  let html = `<p class="question-text">${parsed.statement || 'Question'}</p>`;
+
+  if (questionType === 'single_choice' || questionType === 'multiple_choice') {
+    const inputType = questionType === 'single_choice' ? 'radio' : 'checkbox';
+    const nameAttr = questionType === 'single_choice' ? 'question-answer' : 'question-answer[]';
+    html += '<div class="question-options">';
+    parsed.options.forEach((option, index) => {
+      const optionName = option.name || String.fromCharCode(65 + index);
+      html += `
+        <label class="option">
+          <input type="${inputType}" name="${nameAttr}" value="${optionName}">
+          <span>${optionName}. ${option.text || ''}</span>
+        </label>
+      `;
+    });
+    html += '</div>';
+  } else if (questionType === 'true_false') {
+    html += `
+      <div class="question-options">
+        <label class="option"><input type="radio" name="question-answer" value="True"><span>True</span></label>
+        <label class="option"><input type="radio" name="question-answer" value="False"><span>False</span></label>
+      </div>
+    `;
+  } else if (questionType === 'fill_in_the_blank' || questionType === 'short_answer') {
+    html += `
+      <div class="question-text-input">
+        <textarea id="question-text-answer" class="text-answer" placeholder="Enter your answer..."></textarea>
+      </div>
+    `;
+  }
+
+  return html;
+}
+
+function removePopup() {
+  if (popupElement) {
+    popupElement.remove();
+    popupElement = null;
+  }
+}
+
+function getAnswer(questionType) {
+  if (questionType === 'single_choice' || questionType === 'true_false') {
+    const selected = popupElement.querySelector('input[name="question-answer"]:checked');
+    return selected?.value || '';
+  }
+  if (questionType === 'multiple_choice') {
+    return Array.from(popupElement.querySelectorAll('input[name="question-answer[]"]:checked'))
+      .map(input => input.value)
+      .join(', ');
+  }
+  if (questionType === 'fill_in_the_blank' || questionType === 'short_answer') {
+    return popupElement.querySelector('#question-text-answer')?.value.trim() || '';
+  }
+  return '';
+}
+
+async function showPopup() {
   if (!document.body) {
     setTimeout(showPopup, 100);
     return;
   }
   
-  if (popupElement) {
-    popupElement.remove();
-    popupElement = null;
+  const questionData = await fetchQuestion();
+  if (!questionData || (questionData.statusCode !== 200 && questionData.statusCode !== 201) || !questionData.data) {
+    return;
   }
+  
+  const question = questionData.data;
+  removePopup();
   
   popupElement = document.createElement('div');
   popupElement.id = 'hello-friend-popup';
   popupElement.innerHTML = `
     <div class="popup-content">
       <div class="popup-header">
-        <h2>Bài tập C++</h2>
+        <h2>Practice Question</h2>
         <button id="close-popup">×</button>
       </div>
       <div class="question-section">
-        <p class="question-text">Đề bài: Cho đoạn code C++ sau, hãy chọn đáp án đúng:</p>
-        <pre class="code-snippet">int x = 5;
-int y = x++;
-cout << x << " " << y;</pre>
-        
-        <div class="question">
-          <p class="question-title">Giá trị của x và y lần lượt là:</p>
-          <label class="option">
-            <input type="radio" name="q1" value="a">
-            <span>A. 6 và 5</span>
-          </label>
-          <label class="option">
-            <input type="radio" name="q1" value="b">
-            <span>B. 5 và 6</span>
-          </label>
-          <label class="option">
-            <input type="radio" name="q1" value="c">
-            <span>C. 6 và 6</span>
-          </label>
-          <label class="option">
-            <input type="radio" name="q1" value="d">
-            <span>D. 5 và 5</span>
-          </label>
-        </div>
+        <div id="question-content" class="question-content"></div>
+        <button id="submit-answer" class="submit-button">Submit Answer</button>
       </div>
     </div>
   `;
   
   document.body.appendChild(popupElement);
   
-  setTimeout(() => {
-    if (popupElement) {
-      popupElement.remove();
-      popupElement = null;
-    }
-  }, 60000);
+  const questionContent = popupElement.querySelector('#question-content');
+  const submitButton = popupElement.querySelector('#submit-answer');
   
-  const closeButton = popupElement.querySelector('#close-popup');
-  if (closeButton) {
-    closeButton.addEventListener('click', () => {
-      if (popupElement) {
-        popupElement.remove();
-        popupElement = null;
-      }
-    });
-  }
+  questionContent.innerHTML = renderQuestion(question);
+  submitButton.setAttribute('data-question-id', question.id);
+  submitButton.setAttribute('data-question-type', question.type);
+  
+  submitButton.addEventListener('click', () => {
+    const questionType = submitButton.getAttribute('data-question-type');
+    const answer = getAnswer(questionType);
+    
+    if (!answer) {
+      alert('Please provide an answer');
+      return;
+    }
+    
+    submitButton.textContent = 'Submitting...';
+    submitButton.disabled = true;
+  });
+  
+  popupElement.querySelector('#close-popup').addEventListener('click', removePopup);
 }
-
