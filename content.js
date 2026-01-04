@@ -16,7 +16,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 function startChecking() {
   if (checkInterval) clearInterval(checkInterval);
   checkInterval = setInterval(() => {
-    if (!popupElement) showPopup();
+    if (!isPopupVisible()) showPopup();
   }, CHECK_INTERVAL);
 }
   
@@ -126,6 +126,10 @@ function renderQuestion(question) {
   return html;
 }
 
+function isPopupVisible() {
+  return popupElement && document.body.contains(popupElement);
+}
+
 function removePopup() {
   if (popupElement) {
     popupElement.remove();
@@ -200,6 +204,10 @@ function renderResult(result) {
 async function showPopup() {
   if (!document.body) {
     setTimeout(showPopup, 100);
+    return;
+  }
+  
+  if (isPopupVisible()) {
     return;
   }
   
