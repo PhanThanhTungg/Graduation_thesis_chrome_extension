@@ -149,6 +149,54 @@ function getAnswer(questionType) {
   return '';
 }
 
+async function submitAnswer(questionId, answer) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/webhook/answer-question`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        questionId,
+        answer,
+        userId: FIXED_USER_ID,
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || 'Failed to submit answer');
+    }
+    
+    const contentType = response.headers.get('content-type');
+    if (!contentType?.includes('application/json')) {
+      throw new Error('Invalid response format');
+    }
+    
+    const data = await response.json();
+    return data.data || data;
+  } catch (error) {
+    throw error;
+  }
+}
+
+function renderResult(result) {
+  let html = '<div class="result-section">';
+  
+  if (result.score !== null && result.score !== undefined) {
+    html += `<div class="result-score">Score: ${result.score}%</div>`;
+  }
+  
+  if (result.explain) {
+    html += `<div class="result-explain"><strong>Explanation:</strong><p>${result.explain}</p></div>`;
+  }
+  
+  if (result.aiFeedback) {
+    html += `<div class="result-feedback"><strong>AI Feedback:</strong><p>${result.aiFeedback}</p></div>`;
+  }
+  
+  html += '</div>';
+  return html;
+}
+
 async function showPopup() {
   if (!document.body) {
     setTimeout(showPopup, 100);
@@ -173,6 +221,7 @@ async function showPopup() {
       </div>
       <div class="question-section">
         <div id="question-content" class="question-content"></div>
+        <div id="result-content" class="result-content" style="display: none;"></div>
         <button id="submit-answer" class="submit-button">Submit Answer</button>
       </div>
     </div>
@@ -181,13 +230,15 @@ async function showPopup() {
   document.body.appendChild(popupElement);
   
   const questionContent = popupElement.querySelector('#question-content');
+  const resultContent = popupElement.querySelector('#result-content');
   const submitButton = popupElement.querySelector('#submit-answer');
   
   questionContent.innerHTML = renderQuestion(question);
   submitButton.setAttribute('data-question-id', question.id);
   submitButton.setAttribute('data-question-type', question.type);
   
-  submitButton.addEventListener('click', () => {
+  submitButton.addEventListener('click', async () => {
+    const questionId = submitButton.getAttribute('data-question-id');
     const questionType = submitButton.getAttribute('data-question-type');
     const answer = getAnswer(questionType);
     
@@ -198,6 +249,18 @@ async function showPopup() {
     
     submitButton.textContent = 'Submitting...';
     submitButton.disabled = true;
+    
+    try {
+      const result = await submitAnswer(questionId, answer);
+      resultContent.innerHTML = renderResult(result);
+      resultContent.style.display = 'block';
+      questionContent.style.display = 'none';
+      submitButton.style.display = 'none';
+    } catch (error) {
+      alert('Failed to submit answer: ' + error.message);
+      submitButton.textContent = 'Submit Answer';
+      submitButton.disabled = false;
+    }
   });
   
   popupElement.querySelector('#close-popup').addEventListener('click', removePopup);
